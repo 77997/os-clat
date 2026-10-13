@@ -245,7 +245,6 @@ Still open, each read from source or documentation only:
 Build:
 - `make package` on plain FreeBSD 15.1 with only pkg installed. There the framework has no `opnsense-version`, PHP or Python, and takes `tayga` from FreeBSD's packages.
 - Whether the router accepts a manifest that names another tayga version than OPNsense's repository has (pkg matches dependencies by name).
-- The maintainer is still `N/A`, while the install notice of the GUI tells users to contact the author and the plugin's Info window ends with "Maintainer: N/A": add `PLUGIN_MAINTAINER=<address>` next to `PLUGIN_WWW` in `build-package.sh` once there is an address to name.
 - `product_arch` in the version file is the architecture of the build machine (`amd64`), in a package whose ABI is `FreeBSD:*:*`. Nothing in the lab depended on it.
 
 Repository:

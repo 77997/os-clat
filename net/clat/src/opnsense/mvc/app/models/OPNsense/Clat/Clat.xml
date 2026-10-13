@@ -1,0 +1,104 @@
+<model>
+    <mount>//OPNsense/clat</mount>
+    <description>464XLAT CLAT settings</description>
+    <version>1.0.0</version>
+    <items>
+        <general>
+            <enabled type="OptionField">
+                <Required>Y</Required>
+                <Default>1</Default>
+                <OptionValues>
+                    <auto value="1">Automatic</auto>
+                    <off value="0">Disabled</off>
+                </OptionValues>
+            </enabled>
+            <uplink type="InterfaceField">
+                <BlankDesc>Automatic</BlankDesc>
+                <Filters>
+                    <enable>/^(?!0).*$/</enable>
+                </Filters>
+            </uplink>
+            <prefix type="NetworkField">
+                <AddressFamily>ipv6</AddressFamily>
+                <NetMaskRequired>Y</NetMaskRequired>
+                <Strict>Y</Strict>
+                <WildcardEnabled>N</WildcardEnabled>
+            </prefix>
+            <discover_dns type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </discover_dns>
+            <keep_with_native type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </keep_with_native>
+            <prefix_id type="TextField">
+                <Mask>/^[0-9a-fA-F]{1,4}$/</Mask>
+                <ValidationMessage>Enter one to four hexadecimal digits.</ValidationMessage>
+            </prefix_id>
+            <address type="NetworkField">
+                <AddressFamily>ipv6</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </address>
+            <mss_clamp type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </mss_clamp>
+            <mss_offset type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>500</MaximumValue>
+            </mss_offset>
+            <firewall_rule type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </firewall_rule>
+            <manual_nat type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </manual_nat>
+            <ipv4_clat type="NetworkField">
+                <Required>Y</Required>
+                <Default>192.0.0.1</Default>
+                <AddressFamily>ipv4</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </ipv4_clat>
+            <ipv4_tayga type="NetworkField">
+                <Required>Y</Required>
+                <Default>192.0.0.2</Default>
+                <AddressFamily>ipv4</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </ipv4_tayga>
+            <ipv4_mtu type="IntegerField">
+                <Required>Y</Required>
+                <Default>1500</Default>
+                <MinimumValue>1280</MinimumValue>
+                <MaximumValue>1500</MaximumValue>
+            </ipv4_mtu>
+            <ipv6_mtu type="IntegerField">
+                <MinimumValue>1280</MinimumValue>
+                <MaximumValue>9000</MaximumValue>
+            </ipv6_mtu>
+            <udp_cksum type="OptionField">
+                <Required>Y</Required>
+                <Default>calc</Default>
+                <OptionValues>
+                    <calc>Calculate</calc>
+                    <drop>Drop</drop>
+                    <forward>Forward</forward>
+                </OptionValues>
+            </udp_cksum>
+            <test_target type="NetworkField">
+                <AddressFamily>ipv4</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </test_target>
+            <log_state type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </log_state>
+        </general>
+    </items>
+</model>

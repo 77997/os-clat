@@ -1,0 +1,2 @@
+rc.conf.d:/etc/rc.conf.d/clat
+clatd.json:/usr/local/etc/clat/clatd.json

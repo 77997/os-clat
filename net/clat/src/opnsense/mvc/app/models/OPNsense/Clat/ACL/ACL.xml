@@ -1,0 +1,16 @@
+<acl>
+    <page-services-clat>
+        <name>Services: CLAT</name>
+        <patterns>
+            <pattern>ui/clat/*</pattern>
+            <pattern>api/clat/*</pattern>
+        </patterns>
+    </page-services-clat>
+    <page-services-clat-log>
+        <name>Services: CLAT: Log File</name>
+        <patterns>
+            <pattern>ui/diagnostics/log/core/clat/*</pattern>
+            <pattern>api/diagnostics/log/core/clat/*</pattern>
+        </patterns>
+    </page-services-clat-log>
+</acl>

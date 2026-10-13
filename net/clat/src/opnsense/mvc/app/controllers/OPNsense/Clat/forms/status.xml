@@ -1,0 +1,42 @@
+<form>
+    <field>
+        <id>status.state</id>
+        <label>State</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.uplink</id>
+        <label>Uplink</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.pref64</id>
+        <label>NAT64 prefix</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.address</id>
+        <label>CLAT address</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.mtu</id>
+        <label>MTU and MSS</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.gateway</id>
+        <label>IPv4 default route</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.tayga</id>
+        <label>Translator</label>
+        <type>info</type>
+    </field>
+    <field>
+        <id>status.preflight</id>
+        <label>Checks</label>
+        <type>info</type>
+    </field>
+</form>

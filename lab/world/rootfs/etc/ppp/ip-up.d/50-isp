@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs only when IPCP came up ("ispctl ipv4 on" and a client that proposes IPCP).
+# Its log line is the evidence for the native-IPv4 test.
+logger -t ispctl "IPv4 up on $1: local $4 remote $5"

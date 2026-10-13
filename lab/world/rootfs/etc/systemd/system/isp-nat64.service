@@ -1,0 +1,14 @@
+[Unit]
+Description=Lab PLAT: tayga NAT64 for 64:ff9b::/96
+Requires=isp-base.service
+After=isp-base.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/tayga --mktun --config /etc/isp/tayga-nat64.conf
+ExecStartPre=/usr/local/sbin/ispctl _nat64_net
+ExecStart=/usr/sbin/tayga --nodetach --config /etc/isp/tayga-nat64.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

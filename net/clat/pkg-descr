@@ -1,0 +1,14 @@
+464XLAT CLAT (RFC 6877) for uplinks that carry IPv6
+only.  It runs tayga on a virtual WAN interface, so that the IPv4
+gateway, the default route and outbound NAT are provided by the
+normal firewall machinery.  The NAT64 prefix is discovered
+automatically from router advertisements (PREF64, RFC 8781) and
+through DNS (RFC 7050), and the CLAT activates only while the
+firewall has no native IPv4.
+
+Plugin Changelog
+================
+
+1.0
+
+* Initial release

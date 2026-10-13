@@ -1,0 +1,49 @@
+name: ci
+
+# The checks that need no OPNsense. publish.yml runs the same job before it builds.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 3.13 is the Python the lab notes name for OPNsense 26.7; the plugin is written for 3.11 to 3.13
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Python unit tests
+        working-directory: net/clat
+        run: python3 -B -m unittest discover -s tests
+
+      # php is part of the runner image
+      - name: PHP syntax
+        run: |
+          php -v
+          find net/clat/src -type f \( -name '*.php' -o -name '*.inc' \) -print0 | xargs -0 -r -n 1 php -l
+
+      - name: XML well-formedness
+        run: |
+          find net/clat/src -type f -name '*.xml' -print0 | xargs -0 -r python3 -c '
+          import sys
+          import xml.dom.minidom
+          for path in sys.argv[1:]:
+              xml.dom.minidom.parse(path)
+              print("well-formed:", path)
+          '
+
+      - name: Shell syntax of the packaging scripts
+        run: |
+          for script in packaging/*.sh; do sh -n "$script"; done

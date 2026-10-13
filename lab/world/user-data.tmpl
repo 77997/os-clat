@@ -1,0 +1,21 @@
+#cloud-config
+# Seed for the lab VM "clat-world" (NoCloud, volume label CIDATA). Kept minimal on purpose:
+# cloud-init runs once per disk, everything else is pushed over ssh and installed by install.sh.
+# build.sh fills in the two placeholders below: LAB_SSH_PUBKEY (one line, the content of
+# lab_ed25519.pub) and CONSOLE_PASS (letters and digits only). It also writes meta-data.
+hostname: clat-world
+manage_etc_hosts: true
+disable_root: false
+ssh_pwauth: false
+ssh_authorized_keys:
+  - "@@LAB_SSH_PUBKEY@@"
+users:
+  - default
+  - name: root
+    ssh_authorized_keys:
+      - "@@LAB_SSH_PUBKEY@@"
+# The password is for the Hyper-V console only; ssh stays key-only.
+chpasswd:
+  expire: false
+  users:
+    - {name: root, password: "@@CONSOLE_PASS@@", type: text}

@@ -1,0 +1,2 @@
+# lab: Debian's kea-dhcp6 profile has no capability rule; port 547 needs this one
+capability net_bind_service,

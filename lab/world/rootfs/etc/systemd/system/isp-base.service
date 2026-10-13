@@ -1,0 +1,12 @@
+[Unit]
+Description=Lab ISP base setup (dummy interface, routes, pppd options)
+After=systemd-networkd.service cloud-init-local.service
+Wants=systemd-networkd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ispctl init
+
+[Install]
+WantedBy=multi-user.target

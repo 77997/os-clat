@@ -1,0 +1,14 @@
+# "ispctl client X" is "ip netns exec client X". udhcpc keeps retrying while OPNsense is down.
+[Unit]
+Description=Lab LAN client: namespace "client" with a DHCPv4 client on lan0
+After=systemd-networkd.service cloud-init-local.service isp-base.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/sbin/ispctl _client_setup
+ExecStart=/usr/local/sbin/ispctl client busybox udhcpc -f -i lan0 -O mtu -x hostname:clat-client -s /usr/local/lib/isp/udhcpc-script
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

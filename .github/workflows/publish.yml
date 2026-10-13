@@ -1,0 +1,127 @@
+name: publish
+
+# Builds the os-clat package, makes the signed pkg repository and publishes it on GitHub Pages.
+#
+#   push of a tag v<version>      a release: build, sign, deploy, check the live site
+#   manual run on a tag           the same release again
+#   manual run on a branch        a rehearsal: build and sign, nothing is deployed
+#
+# The steps are in packaging/build-package.sh and packaging/make-repo.sh; packaging/README.md has
+# the one-time set-up (Pages, the github-pages environment, the signing key and its fingerprint).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one Pages deployment at a time; a running one is never cancelled
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The key has to be a file inside the workspace: that is what the VM step copies into the VM.
+      # packaging/work is ignored by git and only packaging/work/site is uploaded below.
+      - name: Signing key into the workspace
+        env:
+          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+        run: |
+          if [ -z "$REPO_SIGNING_KEY" ]; then
+            echo "::error::the repository secret REPO_SIGNING_KEY is not set (packaging/README.md)"
+            exit 1
+          fi
+          mkdir -p packaging/work
+          umask 077
+          printf '%s\n' "$REPO_SIGNING_KEY" > packaging/work/signing.key
+
+      # The address of the site is not passed: it is the constant in make-repo.sh, the one that
+      # routers have stored.
+      - name: Build the package and the repository on FreeBSD 15
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          PLUGIN_HASH: ${{ github.sha }}
+          SIGNING_KEY: packaging/work/signing.key
+        with:
+          release: "15.1"
+          envs: "RELEASE_TAG PLUGIN_HASH SIGNING_KEY"
+          # The action pipes these lines into a shell in the VM; "< /dev/null" keeps a command
+          # inside the scripts from reading the lines that follow it.
+          run: |
+            set -eu
+            freebsd-version
+            sh packaging/build-package.sh < /dev/null
+            sh packaging/make-repo.sh < /dev/null
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f packaging/work/signing.key
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: packaging/work/site
+
+  deploy:
+    # only a tag is published; the github-pages environment must allow tags v* (packaging/README.md)
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      # What a router fetches, from the address GitHub serves the site on. The runner has no IPv6,
+      # so the path over IPv6 remains a check on a router.
+      - name: Check the published site
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -eu
+          site=${PAGE_URL%/}
+          version=${GITHUB_REF_NAME#v}
+
+          # the new version can take a moment to appear
+          tries=0
+          until curl -fsS "$site/index.html" | grep -qF "os-clat $version<"; do
+            tries=$((tries + 1))
+            if [ "$tries" -ge 30 ]; then
+              echo "::error::$site/index.html does not show os-clat $version"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          # repo/data.pkg is the catalogue that the pkg of OPNsense 26.7 reads
+          for file in os-clat.conf os-clat.fingerprint repo/meta.conf repo/data.pkg repo/packagesite.pkg "repo/All/os-clat-$version.pkg"; do
+            curl -fsS -o /dev/null "$site/$file"
+            echo "served: $site/$file"
+          done
+
+          # The address inside os-clat.conf is the one routers keep. It has to be this site.
+          if ! curl -fsS "$site/os-clat.conf" | grep -qF "url: \"$site/repo\""; then
+            echo "::error::os-clat.conf does not name $site/repo: the site is not served on the fixed address, or Enforce HTTPS is not ticked (packaging/README.md, The address and set-up step 2)"
+            exit 1
+          fi

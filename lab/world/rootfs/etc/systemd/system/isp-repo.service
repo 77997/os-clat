@@ -1,0 +1,13 @@
+[Unit]
+Description=Lab package repository of os-clat: HTTPS on repo.clat.lab
+Requires=isp-base.service
+After=isp-base.service
+# the certificate and the site come from "bash lab.sh repo build"; without them the unit is skipped
+ConditionPathExists=/etc/isp/repo-tls.pem
+
+[Service]
+ExecStart=/usr/local/sbin/ispctl _repo
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

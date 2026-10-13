@@ -1,0 +1,12 @@
+# lab downloads, disks, keys and results
+lab/.work/
+
+# never commit signing keys
+.secrets/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# crash dumps of Git Bash tools
+*.stackdump

@@ -1,0 +1,11 @@
+[Unit]
+Description=Lab IPv4 test target: HTTP on 192.88.99.1
+Requires=isp-base.service
+After=isp-base.service
+
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 80 --bind 192.88.99.1 --directory /srv/isp-www
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

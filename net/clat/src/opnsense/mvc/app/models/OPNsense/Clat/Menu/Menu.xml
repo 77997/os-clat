@@ -1,0 +1,8 @@
+<menu>
+    <Services>
+        <Clat VisibleName="CLAT" cssClass="fa fa-exchange fa-fw">
+            <Settings order="10" url="/ui/clat"/>
+            <Log VisibleName="Log File" order="20" url="/ui/diagnostics/log/core/clat"/>
+        </Clat>
+    </Services>
+</menu>

@@ -1,0 +1,17 @@
+{% set g = helpers.getNodeByTag('OPNsense.clat.general') %}
+{
+    "enabled": {{ "true" if g.enabled|default("1") == "1" else "false" }},
+    "prefix": {{ g.prefix|default("")|tojson }},
+    "discover_dns": {{ "true" if g.discover_dns|default("1") == "1" else "false" }},
+    "keep_with_native": {{ "true" if g.keep_with_native|default("0") == "1" else "false" }},
+    "prefix_id": {{ g.prefix_id|default("")|tojson }},
+    "address": {{ g.address|default("")|tojson }},
+    "manual_nat": {{ "true" if g.manual_nat|default("0") == "1" else "false" }},
+    "ipv4_clat": {{ g.ipv4_clat|default("192.0.0.1")|tojson }},
+    "ipv4_tayga": {{ g.ipv4_tayga|default("192.0.0.2")|tojson }},
+    "ipv4_mtu": {{ g.ipv4_mtu|default("1500")|int }},
+    "ipv6_mtu": {{ g.ipv6_mtu|default("0")|int }},
+    "udp_cksum": {{ g.udp_cksum|default("calc")|tojson }},
+    "test_target": {{ g.test_target|default("")|tojson }},
+    "log_state": {{ "true" if g.log_state|default("1") == "1" else "false" }}
+}

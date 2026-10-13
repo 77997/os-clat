@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>os-clat package repository</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.6rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  pre { padding: .75rem; border: 1px solid #8886; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+  code { font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<h1>os-clat package repository</h1>
+
+<p>This site is a package repository for OPNsense. It holds one plugin, <b>os-clat</b>, a 464XLAT CLAT
+(RFC 6877): on an uplink that carries only IPv6 it gives the devices behind the
+firewall IPv4 through the provider's NAT64. The plugin is built for OPNsense 26.7. The source is at
+<a href="https://github.com/77997/os-clat">github.com/77997/os-clat</a>.</p>
+
+<!-- make-repo.sh and the publish workflow read the version from the next line -->
+<p>Current version: <b>os-clat %%VERSION%%</b></p>
+
+<h2>Install</h2>
+
+<ol>
+<li>Bring OPNsense up to date: <i>System &gt; Firmware &gt; Status</i>, <i>Check for updates</i>.
+OPNsense refuses to install a plugin while an update of OPNsense itself is pending.</li>
+<li>Open a shell on the firewall as root: sign in on the console or over SSH, then choose option 8 (Shell) in the menu, and paste this one line.
+It adds this repository and the fingerprint of its signing key. It works on a firewall that has
+only IPv6.
+<pre><code>mkdir -p /usr/local/etc/pkg/fingerprints/os-clat/trusted /usr/local/etc/pkg/fingerprints/os-clat/revoked &amp;&amp; fetch -o /usr/local/etc/pkg/fingerprints/os-clat/trusted/os-clat.fingerprint %%SITE_URL%%/os-clat.fingerprint &amp;&amp; fetch -o /usr/local/etc/pkg/repos/os-clat.conf %%SITE_URL%%/os-clat.conf</code></pre></li>
+<li>In the web interface open <i>System &gt; Firmware &gt; Plugins</i>. At the end of the list click
+<i>Click to view the community plugins.</i> Find <b>os-clat</b> (repository <i>os-clat</i>), click
+<b>+</b> and confirm the <i>Third party software</i> notice with <i>Install</i>.</li>
+<li>The plugin is under <i>Services &gt; CLAT</i>.</li>
+</ol>
+
+<h2>Updates</h2>
+
+<p>New versions arrive with the normal firmware updates: <i>System &gt; Firmware &gt; Status</i>,
+<i>Check for updates</i>. Nothing has to be repeated in the shell.</p>
+
+<h2>Signing key</h2>
+
+<p>The repository is signed. The one line above installs this fingerprint (SHA-256 of the public
+key), and OPNsense accepts packages from this repository only when their catalogue is signed with
+that key:</p>
+<pre><code>%%FINGERPRINT%%</code></pre>
+
+<h2>Remove</h2>
+
+<p>Remove the plugin under <i>System &gt; Firmware &gt; Plugins</i>, then remove the repository:</p>
+<pre><code>rm -f /usr/local/etc/pkg/repos/os-clat.conf &amp;&amp; rm -rf /usr/local/etc/pkg/fingerprints/os-clat</code></pre>
+
+</body>
+</html>

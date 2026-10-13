@@ -1,0 +1,513 @@
+#!/bin/sh
+# ispctl - control the simulated ISP on the lab VM "clat-world". Lab use only.
+#
+# Plain POSIX sh (dash on Debian 13). Settings: /etc/isp/isp.env (KEY=value, no spaces).
+# State of the newest PPP session: /run/isp/session (IFACE, PEER_LL, PPPD).
+# Written from the ISP sheet section 9.3 and PLAN.md section 2.2 item 6.
+# Verbs with a leading underscore are called by systemd units and pppd hooks only.
+# The settings and session files are sourced at run time:
+# shellcheck disable=SC1090
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+CONF=/etc/isp/isp.env
+CONF_DEFAULT=/etc/isp/isp.env.default
+RUN=/run/isp
+SESS=$RUN/session
+LOCK=$RUN/lock
+LOGDIR=/var/log/isp
+PPPOPT=/etc/ppp/pppoe-server-options
+RADVDCONF=/etc/radvd.conf
+KEACONF=/etc/kea/kea-dhcp6.conf
+DNS64CONF=/etc/unbound/unbound.conf.d/isp-dns64.conf
+WAN=wan0
+VLAN_ID=40
+VLAN_MARK=/etc/isp/vlan-on     # exists: the PPPoE server is on $WAN.$VLAN_ID (ispctl vlan on); no profile changes it
+LAN=lan0
+NS=client
+GOOGLE_DNS64="2001:4860:4860::6464 2001:4860:4860::64"   # the resolver also answers on the addresses the customer page names
+REPO_ADDR=2606:50c0:8000::153    # repo.clat.lab, the stand-in for the site of the os-clat package repository (isp-repo.service). It is an
+                                # address of GitHub Pages, as the resolver has Google's: OPNsense's Unbound removes answers in 2001:db8::/32
+. "$CONF"
+
+say() { echo "ispctl: $*"; logger -t ispctl -- "$*" 2>/dev/null || true; }
+die() { echo "ispctl: $*" >&2; exit 2; }
+usage() {
+    cat >&2 <<'EOF'
+usage: ispctl <verb> [arguments]
+  pref64 on [prefix/len] [lifetime] | off | withdraw   PREF64 option in the RA (withdraw = lifetime 0)
+  dns64 on|off                 AAAA for ipv4only.arpa and the dns64 module; restarts unbound
+  slaac on|off                 autonomous flag of the WAN /64
+  pd <prefix/len>              delegated prefix, /48 to /64
+  session reset|drop           reset = LCP terminate and PADT; drop = silent loss
+  ipv4 on|off                  offer IPCP at the next session
+  mtu <1492..1500>             PPP MTU the BNG grants; restarts the PPPoE server
+  ramtu auto|off|<n>           MTU option in the RA
+  provision on|off             IPv4 NAT for 10.99.0.0/24 out of up0
+  echodf on|off                 DF on the echo replies of the test target (off: clear, as Linux sends them)
+  resolver on|off               off: the DNS64 resolver drops every query of the subscriber without an answer
+  vlan on|off                   PPPoE server on wan0.40 (tagged VLAN 40, as in production) or on wan0 (untagged)
+  set KEY VALUE               change one setting of isp.env; then: ispctl apply
+  apply                        regenerate the RA and PD configuration of the session
+  defaults [p0]                isp.env.default again (the production profile), or isp.env.p0; ends the session
+  iface                        interface of the current PPP session, nothing if there is none
+  client <command...>          run a command in the IPv4-only client namespace
+  client6 on|off                IPv6 on the LAN client (SLAAC from the router under test); off is the default
+  status
+EOF
+    exit 2
+}
+need_onoff() { case "${1:-}" in on|off) ;; *) die "expected on or off" ;; esac; }
+
+setvar() {      # setvar KEY VALUE: store in the settings file and in this shell
+    case "$1" in ''|*[!A-Z0-9_]*) die "not a setting name: '$1'" ;; esac
+    case "$2" in ''|*[!A-Za-z0-9:./_-]*) die "value not allowed for $1: '$2'" ;; esac
+    grep -q "^$1=" "$CONF" || die "unknown setting $1; known: $(sed -n 's/^\([A-Z0-9_]*\)=.*/\1/p' "$CONF" | tr '\n' ' ')"
+    sed -i "s|^$1=.*|$1=$2|" "$CONF"
+    eval "$1=\$2"
+}
+
+have_session() {
+    IFACE=""; PEER_LL=""; PPPD=""
+    if [ -r "$SESS" ]; then . "$SESS"; fi
+    [ -n "$IFACE" ] && [ -d "/sys/class/net/$IFACE" ]
+}
+
+wait_dev() {    # wait_dev DEV: up to 30 s for a NIC of the main namespace (udev names them by MAC)
+    w_n=0
+    while [ ! -d "/sys/class/net/$1" ]; do
+        [ "$w_n" -lt 30 ] || return 1
+        sleep 1
+        w_n=$((w_n + 1))
+    done
+}
+
+offload_off() { # offload_off DEV [client]: the router under test must see the frames as sent (PLAN decision 28)
+    o_pre=""
+    if [ "${2:-}" = client ]; then o_pre="ip netns exec $NS"; fi
+    for o_f in tso gso gro lro tx; do
+        $o_pre ethtool -K "$1" "$o_f" off >/dev/null 2>&1 || true
+    done
+    mkdir -p "$LOGDIR"
+    $o_pre ethtool -k "$1" > "$LOGDIR/ethtool-$1.log" 2>&1 || true
+    say "offloads on $1: $(grep -E '^(tx-checksumming|tcp-segmentation-offload|generic-segmentation-offload|generic-receive-offload|large-receive-offload):' "$LOGDIR/ethtool-$1.log" | tr -s ' \n' ' ')"
+}
+
+pppoe_dev() {   # the interface the PPPoE server listens on
+    if [ -e "$VLAN_MARK" ]; then echo "$WAN.$VLAN_ID"; else echo "$WAN"; fi
+}
+
+wan_setup() {   # MTU and offloads of the WAN NIC; the VLAN device exists exactly while "ispctl vlan on" is in force
+    ip link set "$WAN" mtu $((BNG_MTU + 8)) up
+    offload_off "$WAN"
+    if [ -e "$VLAN_MARK" ]; then
+        ip link show "$WAN.$VLAN_ID" >/dev/null 2>&1 || ip link add link "$WAN" name "$WAN.$VLAN_ID" type vlan id "$VLAN_ID"
+        echo 1 > "/proc/sys/net/ipv6/conf/$WAN.$VLAN_ID/disable_ipv6"
+        ip link set "$WAN.$VLAN_ID" mtu $((BNG_MTU + 8)) up
+    else
+        ip link del "$WAN.$VLAN_ID" 2>/dev/null || true
+    fi
+}
+
+write_ppp_options() {
+    {
+        echo "# written by ispctl; do not edit"
+        echo "name clat-bng"
+        echo "auth"
+        echo "require-chap"     # fallback if mpd5 does not pass CHAP (PLAN section 7 row 10): require-pap
+        echo "+ipv6"
+        echo "ipv6 ::1,"
+        if [ "$IPV4" != on ]; then echo "noip"; fi
+        echo "lcp-echo-interval 5"
+        echo "lcp-echo-failure 3"
+        echo "nodefaultroute"
+        echo "ipparam clat-lab"
+        echo "debug"
+        echo "logfile $LOGDIR/pppd.log"
+    } > "$PPPOPT"
+}
+
+write_dns64() { # ipv4only.arpa is local data with TTL 60, so prefix discovery by DNS needs no Internet
+    {
+        echo "# written by ispctl dns64 $DNS64; do not edit"
+        echo "server:"
+        if [ "$DNS64" = on ]; then
+            echo '    module-config: "dns64 validator iterator"'
+        else
+            echo '    module-config: "validator iterator"'
+        fi
+        echo '    local-zone: "ipv4only.arpa." static'
+        echo '    local-data: "ipv4only.arpa. 60 IN SOA localhost. nobody.invalid. 1 3600 1200 604800 60"'
+        echo '    local-data: "ipv4only.arpa. 60 IN A 192.0.0.170"'
+        echo '    local-data: "ipv4only.arpa. 60 IN A 192.0.0.171"'
+        if [ "$DNS64" = on ]; then
+            echo '    local-data: "ipv4only.arpa. 60 IN AAAA 64:ff9b::c000:aa"'
+            echo '    local-data: "ipv4only.arpa. 60 IN AAAA 64:ff9b::c000:ab"'
+        fi
+        # v4only.clat.lab: a name with an A record only, for the test target. Local data does not pass
+        # through the dns64 module, so the AAAA that the module would synthesise is written here.
+        echo '    local-zone: "clat.lab." static'
+        echo '    local-data: "v4only.clat.lab. 60 IN A 192.88.99.1"'
+        if [ "$DNS64" = on ]; then
+            echo '    local-data: "v4only.clat.lab. 60 IN AAAA 64:ff9b::c058:6301"'
+        fi
+        echo "    local-data: \"repo.clat.lab. 60 IN AAAA $REPO_ADDR\""
+        if [ "$DNS64" = on ]; then
+            # The lab has no IPv6 Internet, and OPNsense's mirror has an AAAA record: without this line a
+            # router that has only IPv6 could not reach it, and no page under System > Firmware would work.
+            echo '    dns64-ignore-aaaa: "pkg.opnsense.org"'
+        fi
+    } > "$DNS64CONF"
+}
+
+restart_unbound() {
+    unbound-checkconf >/dev/null || die "unbound-checkconf refuses the configuration (PLAN section 7 row 21)"
+    systemctl restart unbound
+}
+
+render_radvd() {
+    r_mtu=$RA_MTU
+    if [ "$r_mtu" = auto ]; then r_mtu=$(cat "/sys/class/net/$IFACE/mtu"); fi
+    {
+        echo "# written by ispctl for the PPP session on $IFACE; do not edit"
+        echo "interface $IFACE {"
+        echo "    AdvSendAdvert on;"
+        echo "    IgnoreIfMissing on;"
+        echo "    MaxRtrAdvInterval $RA_INTERVAL;"
+        echo "    AdvDefaultLifetime $((RA_INTERVAL * 3));"
+        echo "    AdvManagedFlag $RA_M;"
+        echo "    AdvOtherConfigFlag $RA_O;"
+        if [ "$RA_UNSOLICITED" = off ]; then echo "    UnicastOnly on;"; fi
+        if [ "$r_mtu" != off ]; then echo "    AdvLinkMTU $r_mtu;"; fi
+        echo "    prefix $WAN_PREFIX {"
+        echo "        AdvOnLink on;"
+        echo "        AdvAutonomous $SLAAC;"
+        echo "        AdvValidLifetime 7200;"
+        echo "        AdvPreferredLifetime 3600;"
+        echo "    };"
+        if [ "$RA_RDNSS" = on ]; then
+            echo "    RDNSS $DNS_ADDR {"
+            echo "        AdvRDNSSLifetime $((RA_INTERVAL * 3));"
+            echo "    };"
+        fi
+        case "$PREF64" in
+            on)       echo "    nat64prefix $PREF64_PREFIX { AdvValidLifetime $PREF64_LIFETIME; };" ;;
+            withdraw) echo "    nat64prefix $PREF64_PREFIX { AdvValidLifetime 0; };" ;;
+        esac
+        echo "};"
+    } > "$RADVDCONF"
+}
+
+render_kea() {  # render_kea FILE
+    k_p=${PD_PREFIX%/*}; k_l=${PD_PREFIX#*/}
+    cat > "$1" <<EOF
+{
+"Dhcp6": {
+    "interfaces-config": { "interfaces": [ "$IFACE" ] },
+    "lease-database": { "type": "memfile", "persist": false },
+    "renew-timer": $PD_T1,
+    "rebind-timer": $PD_T2,
+    "preferred-lifetime": $PD_PREFERRED,
+    "valid-lifetime": $PD_VALID,
+    "subnet6": [ {
+        "id": 1,
+        "subnet": "$WAN_PREFIX",
+        "interface": "$IFACE",
+        "pd-pools": [ { "prefix": "$k_p", "prefix-len": $k_l, "delegated-len": $k_l } ]
+    } ],
+    "loggers": [ { "name": "kea-dhcp6", "severity": "INFO",
+                   "output-options": [ { "output": "stdout" } ] } ]
+}
+}
+EOF
+}
+
+apply_ra() {    # reload, never restart: a restart sends a final RA with router lifetime 0
+    if ! have_session; then say "no PPP session: stored, used at the next session"; return 0; fi
+    render_radvd
+    systemctl reload-or-restart radvd
+}
+
+apply_pd() {    # apply_pd [force]: Kea is restarted only if its file changed, it is not running, or "force"
+    if ! have_session; then say "no PPP session: stored, used at the next session"; return 0; fi
+    # Kea installs no route; on a point-to-point interface no next hop is needed
+    ip -6 route replace "$WAN_PREFIX" dev "$IFACE"
+    ip -6 route replace "$PD_PREFIX" dev "$IFACE"
+    mkdir -p "$RUN"
+    render_kea "$RUN/kea-dhcp6.conf.new"
+    if [ "${1:-}" = force ] || ! cmp -s "$RUN/kea-dhcp6.conf.new" "$KEACONF" \
+        || ! systemctl is-active --quiet kea-dhcp6-server; then
+        cp "$RUN/kea-dhcp6.conf.new" "$KEACONF"
+        chmod 644 "$KEACONF"    # the daemon runs as _kea
+        if ! systemctl restart kea-dhcp6-server; then
+            say "kea-dhcp6-server did not start; see: journalctl -u kea-dhcp6-server"
+            return 1
+        fi
+    fi
+    rm -f "$RUN/kea-dhcp6.conf.new"
+}
+
+plain_ll() {    # plain_ll DEV: pppd 2.5.2 sets its link-local address as "fe80::1 peer <client>/128". Kea 2.6.3 takes
+                # the client's address for the interface's own, cannot bind to it and listens on no socket (PLAN
+                # section 7 row 11). The same address without a peer and a route for the link, before Kea starts.
+    p_a=$(ip -6 -o addr show dev "$1" scope link | awk '$5 == "peer" { print $4; exit }')
+    [ -n "$p_a" ] || return 0
+    ip -6 addr del "$p_a/128" dev "$1" && ip -6 addr add "$p_a/128" dev "$1" nodad \
+        && ip -6 route replace fe80::/64 dev "$1"
+}
+
+hook_lock() {   # _up and _down only; no other verb may take this lock (PLAN section 2.2 item 6)
+    mkdir -p "$RUN"
+    exec 9> "$LOCK"
+    flock -w 60 9 || say "lock $LOCK not obtained within 60 s, continuing"
+}
+
+cmd=${1:-}
+case "$cmd" in
+pref64)
+    case "${2:-}" in
+        on)
+            if [ -n "${3:-}" ]; then
+                new=$(python3 -c 'import ipaddress,sys; n=ipaddress.IPv6Network(sys.argv[1]); assert n.prefixlen in (32, 40, 48, 56, 64, 96); print(n)' "$3" 2>/dev/null) \
+                    || die "not a NAT64 prefix of length 32, 40, 48, 56, 64 or 96: $3"
+            fi
+            if [ -n "${4:-}" ]; then
+                case "$4" in *[!0-9]*) die "lifetime must be 0..65528 seconds" ;; esac
+                [ "$4" -le 65528 ] || die "lifetime must be 0..65528 seconds"
+            fi
+            setvar PREF64 on
+            if [ -n "${3:-}" ]; then setvar PREF64_PREFIX "$new"; fi
+            if [ -n "${4:-}" ]; then setvar PREF64_LIFETIME "$4"; fi
+            ;;
+        off|withdraw) setvar PREF64 "$2" ;;
+        *) usage ;;
+    esac
+    apply_ra
+    ;;
+dns64)
+    need_onoff "${2:-}"; setvar DNS64 "$2"
+    write_dns64
+    restart_unbound
+    ;;
+slaac)
+    need_onoff "${2:-}"; setvar SLAAC "$2"; apply_ra
+    ;;
+pd)
+    [ -n "${2:-}" ] || usage
+    new=$(python3 -c 'import ipaddress,sys; n=ipaddress.IPv6Network(sys.argv[1]); assert 48 <= n.prefixlen <= 64; print(n)' "$2" 2>/dev/null) \
+        || die "not an IPv6 prefix between /48 and /64: $2"
+    if have_session; then ip -6 route del "$PD_PREFIX" dev "$IFACE" 2>/dev/null || true; fi
+    setvar PD_PREFIX "$new"
+    apply_pd
+    ;;
+session)
+    case "${2:-}" in
+        reset) pkill -TERM -x pppd || true ;;
+        drop)  ip link set "$WAN" down; pkill -KILL -x pppd || true; sleep 2; ip link set "$WAN" up ;;
+        *) usage ;;
+    esac
+    ;;
+ipv4)
+    need_onoff "${2:-}"; setvar IPV4 "$2"; write_ppp_options
+    say "effective at the next session: ispctl session reset"
+    ;;
+mtu)
+    new=${2:-}
+    case "$new" in ''|*[!0-9]*) usage ;; esac
+    if [ "$new" -lt 1492 ] || [ "$new" -gt 1500 ]; then die "PPP MTU must be 1492..1500 (limit of rp-pppoe 4.0 and pppd 2.5.2)"; fi
+    setvar BNG_MTU "$new"
+    wan_setup
+    systemctl restart isp-pppoe     # pppoe-server reads the interface MTU when it opens the interface
+    ;;
+ramtu)
+    case "${2:-}" in
+        auto|off) ;;
+        ''|*[!0-9]*) usage ;;
+        *) [ "$2" -ge 1280 ] || die "RA MTU must be auto, off or at least 1280" ;;
+    esac
+    setvar RA_MTU "$2"; apply_ra
+    ;;
+provision)
+    need_onoff "${2:-}"
+    nft flush set inet isp provision4
+    if [ "$2" = on ]; then nft add element inet isp provision4 '{ 10.99.0.0/24 }'; fi
+    ;;
+echodf)         # With DF clear the NAT64 returns every echo reply above 1260 bytes as IPv6 fragments, and no tayga
+                # translates a fragmented ICMP message: such a reply never reaches the CLAT's IPv4 side.
+    need_onoff "${2:-}"
+    nft flush chain inet isp echodf
+    if [ "$2" = on ]; then
+        nft add rule inet isp echodf ip saddr 192.88.99.1 icmp type echo-reply counter ip frag-off set 0x4000
+    fi
+    ;;
+resolver)       # off: no answer and no error, as when the resolver's network is unreachable
+    need_onoff "${2:-}"
+    nft flush chain inet isp resolver
+    if [ "$2" = off ]; then nft add rule inet isp resolver counter drop; fi
+    ;;
+vlan)           # The Hyper-V adapters must be in trunk mode first (lab README, "VLAN 40"); in untagged mode
+                # no tagged frame crosses the switch.
+    need_onoff "${2:-}"
+    if [ "$2" = on ]; then
+        : > "$VLAN_MARK"
+        wan_setup
+        systemctl restart isp-pppoe
+        v_n=0
+        while [ "$(cat "/sys/class/net/$WAN.$VLAN_ID/statistics/rx_packets")" = 0 ]; do
+            if [ "$v_n" -ge 60 ]; then
+                rm -f "$VLAN_MARK"
+                wan_setup
+                systemctl restart isp-pppoe
+                die "vlan on FAILED: no frame tagged with VLAN $VLAN_ID arrived on $WAN within 60 s. The PPPoE server is back on $WAN (untagged). Either the Hyper-V adapters are not in trunk mode (run on the host, elevated: lab\\hyperv\\wan-vlan.ps1 -Action Trunk) or OPNsense does not dial on vlan0.$VLAN_ID yet (bash lab.sh opn-vlan on)."
+            fi
+            sleep 1
+            v_n=$((v_n + 1))
+        done
+        say "vlan on: the PPPoE server is on $WAN.$VLAN_ID; the first tagged frame arrived after $v_n s"
+    else
+        rm -f "$VLAN_MARK"
+        wan_setup
+        systemctl restart isp-pppoe
+        say "vlan off: the PPPoE server is on $WAN (untagged)"
+    fi
+    ;;
+set)
+    [ -n "${3:-}" ] || usage
+    setvar "$2" "$3"; say "stored $2=$3; run: ispctl apply"
+    ;;
+apply)
+    apply_ra; apply_pd
+    ;;
+defaults)       # the production profile again, or the named one (p0). The session ends; the client has to dial again.
+    d_src=$CONF_DEFAULT
+    if [ -n "${2:-}" ]; then d_src=/etc/isp/isp.env.$2; fi
+    [ -r "$d_src" ] || die "no profile file $d_src"
+    cp "$d_src" "$CONF"
+    . "$CONF"
+    nft flush chain inet isp echodf
+    nft flush chain inet isp resolver
+    ip netns exec "$NS" sysctl -qw "net.ipv6.conf.$LAN.disable_ipv6=1" 2>/dev/null || true
+    wan_setup
+    write_ppp_options
+    write_dns64
+    systemctl restart isp-pppoe
+    restart_unbound
+    say "defaults restored from $d_src"
+    ;;
+iface)
+    if have_session; then echo "$IFACE"; fi
+    ;;
+client)
+    shift
+    [ $# -gt 0 ] || usage
+    exec ip netns exec "$NS" "$@"
+    ;;
+client6)        # The client is IPv4-only so that its IPv4 can only come through the CLAT. "on" lets one test see what
+                # an IPv6 host on the LAN gets; "off" removes its IPv6 addresses again.
+    need_onoff "${2:-}"
+    if [ "$2" = on ]; then c_v=0; else c_v=1; fi
+    ip netns exec "$NS" sysctl -qw "net.ipv6.conf.$LAN.disable_ipv6=$c_v"
+    ;;
+status)
+    echo "== settings"; cat "$CONF"
+    echo "== PPPoE server on"; pppoe_dev
+    echo "== session"
+    if have_session; then echo "$IFACE peer $PEER_LL mtu $(cat "/sys/class/net/$IFACE/mtu")"; else echo "none"; fi
+    echo "== pppd"; pgrep -a -x pppd || echo "none"
+    echo "== services"
+    for u in isp-base isp-pppoe isp-nat64 radvd kea-dhcp6-server unbound nftables isp-www isp-iperf3 isp-client isp-repo; do
+        printf '%-20s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null || true)"
+    done
+    echo "== links"; ip -br link || true
+    echo "== addresses"; ip -br addr || true
+    echo "== ipv6 routes"; ip -6 route show | grep -v '^fe80' || true
+    echo "== provisioning NAT"; nft list set inet isp provision4 | grep elements || echo "off"
+    echo "== DF on the echo replies of the test target"; nft list chain inet isp echodf | grep frag-off || echo "off"
+    echo "== resolver"; if nft list chain inet isp resolver | grep -q drop; then echo "off (queries of the subscriber are dropped)"; else echo "on"; fi
+    echo "== radvd.conf"; cat "$RADVDCONF" 2>/dev/null || echo "none"
+    echo "== dns64 (ipv4only.arpa AAAA)"; dig +short +time=2 +tries=1 @"$DNS_ADDR" ipv4only.arpa AAAA || true
+    echo "== client"; ip -n "$NS" -br addr 2>/dev/null || echo "no namespace"
+    ;;
+init)           # boot: isp-base.service
+    mkdir -p "$RUN" "$LOGDIR" /var/lib/isp/tayga /srv/isp-www /srv/isp-repo
+    rm -f "$SESS" "$RADVDCONF"
+    modprobe -a dummy tun pppoe
+    ip link show isp0 >/dev/null 2>&1 || ip link add isp0 type dummy
+    ip link set isp0 up
+    ip addr replace 192.88.99.1/32 dev isp0
+    ip -6 addr replace "$DNS_ADDR/128" dev isp0
+    ip -6 addr replace "$REPO_ADDR/128" dev isp0
+    for i_a in $GOOGLE_DNS64; do ip -6 addr replace "$i_a/128" dev isp0; done
+    ip route replace blackhole 192.88.99.0/24
+    wait_dev "$WAN" || die "$WAN does not exist; NIC names are bound to MAC addresses in network-config"
+    sysctl -qw "net.ipv6.conf.$WAN.disable_ipv6=1"
+    wan_setup
+    write_ppp_options
+    [ -s /srv/isp-www/index.html ] || echo "clat lab IPv4 test target 192.88.99.1" > /srv/isp-www/index.html
+    if [ "$(stat -c %s /srv/isp-www/100M.bin 2>/dev/null || echo 0)" != 104857600 ]; then
+        head -c 104857600 /dev/zero > /srv/isp-www/100M.bin
+    fi
+    ;;
+_pppoe)         # isp-pppoe.service: the PPPoE server in the foreground. One session slot (-N 1): the session is
+                # always ppp0 and the IPCP client address 100.64.0.2.
+    exec /usr/sbin/pppoe-server -F -I "$(pppoe_dev)" -C clat-bng -k -g pppoe.so -L 100.64.0.1 -R 100.64.0.2 -N 1 -O "$PPPOPT"
+    ;;
+_nat64_net)     # isp-nat64.service, after tayga --mktun
+    ip link set nat64 mtu 1600 up
+    ip -6 addr replace 2001:db8:64::1/128 dev nat64     # global source for the kernel's ICMPv6 errors
+    ip route replace 192.168.255.0/24 dev nat64 mtu 1500
+    ip -6 route replace 64:ff9b::/96 dev nat64
+    ip -6 route replace 2001:db8:64::64/128 dev nat64
+    ;;
+_repo)          # isp-repo.service: the site of the package repository, https://repo.clat.lab/, in the foreground
+    exec /usr/bin/python3 -u /usr/local/lib/isp/repo-https.py "$REPO_ADDR" /srv/isp-repo /etc/isp/repo-tls.pem
+    ;;
+_client_setup)  # isp-client.service: namespace with IPv6 disabled before the NIC enters it
+    ip netns list | grep -qw "$NS" || ip netns add "$NS"
+    mkdir -p "/etc/netns/$NS"
+    [ -e "/etc/netns/$NS/resolv.conf" ] || : > "/etc/netns/$NS/resolv.conf"
+    # without this, names are looked up by systemd-resolved of the main namespace and never reach the router
+    echo "hosts: files dns" > "/etc/netns/$NS/nsswitch.conf"
+    ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1
+    if ! ip -n "$NS" link show "$LAN" >/dev/null 2>&1; then
+        wait_dev "$LAN" || die "$LAN does not exist; NIC names are bound to MAC addresses in network-config"
+        ip link set "$LAN" netns "$NS"
+    fi
+    ip -n "$NS" link set lo up
+    ip -n "$NS" link set "$LAN" up
+    offload_off "$LAN" client
+    ;;
+_up)            # /etc/ppp/ipv6-up.d/50-isp: $2 interface, $3 peer link-local
+    [ -n "${3:-}" ] || usage
+    hook_lock
+    printf 'IFACE=%s\nPEER_LL=%s\nPPPD=%s\n' "$2" "$3" "${PPPD_PID:-}" > "$SESS"
+    say "session up on $2, peer $3, mtu $(cat "/sys/class/net/$2/mtu")"
+    plain_ll "$2" || say "the link-local address of $2 could not be set without its peer; Kea will not listen"
+    apply_ra || say "radvd did not start or reload; see: journalctl -u radvd"
+    apply_pd force      # a new interface instance: Kea has to open its sockets again
+    ;;
+_down)          # /etc/ppp/ipv6-down.d/50-isp: $2 interface
+    [ -n "${2:-}" ] || usage
+    hook_lock
+    IFACE=""; PPPD=""
+    if [ -r "$SESS" ]; then . "$SESS"; fi
+    # With one session slot every session is ppp0, so the pppd pid tells a late hook of an old session apart.
+    if [ "$IFACE" = "$2" ] && { [ -z "$PPPD" ] || [ -z "${PPPD_PID:-}" ] || [ "$PPPD" = "$PPPD_PID" ]; }; then
+        rm -f "$SESS"
+        systemctl stop kea-dhcp6-server radvd || true
+        say "session down on $2"
+    else
+        say "session down on $2 ignored: not the current session"
+    fi
+    ;;
+_stopped)       # isp-pppoe.service, ExecStopPost: the server is gone and its session with it. systemd ends pppd's
+                # own down hook with the unit (a second SIGTERM once the server has exited), before _down has run.
+    rm -f "$SESS"
+    systemctl stop kea-dhcp6-server radvd || true
+    say "PPPoE server stopped: no session"
+    ;;
+*)
+    usage
+    ;;
+esac

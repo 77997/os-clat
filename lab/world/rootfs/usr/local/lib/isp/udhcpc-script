@@ -1,0 +1,18 @@
+#!/bin/sh
+# busybox udhcpc event script for the lab client namespace.
+# Runs inside "ip netns exec client", where /etc/resolv.conf is /etc/netns/client/resolv.conf.
+# udhcpc passes the lease in the environment (interface, ip, mask, router, dns):
+# shellcheck disable=SC2154
+case "$1" in
+    deconfig)
+        ip addr flush dev "$interface"
+        ip link set "$interface" up
+        ;;
+    bound|renew)
+        ip addr replace "$ip/${mask:-24}" dev "$interface"
+        ip route replace default via "${router%% *}" dev "$interface"
+        : > /etc/resolv.conf
+        for d in $dns; do echo "nameserver $d" >> /etc/resolv.conf; done
+        ;;
+esac
+exit 0

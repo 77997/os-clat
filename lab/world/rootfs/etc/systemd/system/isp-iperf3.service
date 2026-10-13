@@ -1,0 +1,11 @@
+[Unit]
+Description=Lab IPv4 test target: iperf3 on 192.88.99.1
+Requires=isp-base.service
+After=isp-base.service
+
+[Service]
+ExecStart=/usr/bin/iperf3 -s -B 192.88.99.1
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

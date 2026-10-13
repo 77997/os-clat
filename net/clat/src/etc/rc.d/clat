@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# PROVIDE: clat
+# REQUIRE: SERVERS
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name=clat
+rcvar=clat_enable
+command=/usr/local/opnsense/scripts/clat/clatd.py
+command_interpreter=/usr/local/bin/python3
+pidfile="/var/run/${name}.pid"
+required_files="/usr/local/etc/clat/clatd.json"
+extra_commands="reload"
+
+load_rc_config $name
+
+: ${clat_enable:=NO}
+
+run_rc_command $1

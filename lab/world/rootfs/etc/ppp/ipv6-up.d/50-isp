@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run by pppd through /etc/ppp/ipv6-up when IPv6CP is up.
+# $1 interface, $4 local link-local, $5 remote link-local
+exec /usr/local/sbin/ispctl _up "$1" "$5"

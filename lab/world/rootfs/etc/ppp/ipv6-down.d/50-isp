@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run by pppd through /etc/ppp/ipv6-down when IPv6CP goes down. $1 interface
+exec /usr/local/sbin/ispctl _down "$1"

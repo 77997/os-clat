@@ -1,0 +1,18 @@
+# The server's command line is in "ispctl _pppoe": on wan0, or on wan0.40 after "ispctl vlan on".
+# Fallback if kernel-mode PPPoE does not work (PLAN section 7 row 10): remove "-k -g pppoe.so" there.
+# Fallback if redials meet a busy slot for too long (row 23): -N 8.
+[Unit]
+Description=Lab BNG: PPPoE server on the WAN link (IPv6CP only by default)
+Requires=isp-base.service
+After=isp-base.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/modprobe -a pppoe
+ExecStart=/usr/local/sbin/ispctl _pppoe
+ExecStopPost=/usr/local/sbin/ispctl _stopped
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

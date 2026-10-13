@@ -1,0 +1,2 @@
+/usr/local/sbin/pluginctl -i || :
+/usr/local/sbin/configctl clat restart || :

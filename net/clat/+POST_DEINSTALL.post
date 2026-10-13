@@ -1,0 +1,10 @@
+/usr/local/sbin/pluginctl -i || :
+clat_pid=$(/sbin/ifconfig tun464 2>/dev/null | /usr/bin/sed -n 's/.*Opened by PID \([0-9][0-9]*\).*/\1/p')
+if [ -n "${clat_pid}" ]; then
+	/bin/kill ${clat_pid} >/dev/null 2>&1 || :
+	/bin/sleep 1
+fi
+timeout 10 /sbin/ifconfig tun464 destroy >/dev/null 2>&1 || :
+/bin/rm -f /tmp/tun464_oldip /tmp/tun464_oldgw
+/bin/rm -rf /usr/local/opnsense/scripts/clat/lib/__pycache__
+/usr/local/sbin/configctl interface routes configure || :

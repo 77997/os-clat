@@ -1,0 +1,2 @@
+# no line-end conversion: the shell scripts and the cloud-init files must keep LF
+* -text

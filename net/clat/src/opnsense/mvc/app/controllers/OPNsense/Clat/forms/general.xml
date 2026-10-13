@@ -1,0 +1,117 @@
+<form>
+    <field>
+        <id>clat.general.enabled</id>
+        <label>Mode</label>
+        <type>dropdown</type>
+        <help>In automatic mode the CLAT activates by itself as soon as a NAT64 prefix is found and this firewall has no native IPv4, and deactivates when native IPv4 appears. Disabled stops the service and removes the CLAT interface.</help>
+    </field>
+    <field>
+        <id>clat.general.uplink</id>
+        <label>Uplink</label>
+        <type>dropdown</type>
+        <help>The interface that carries IPv6 to the provider. Automatic picks WAN when it is enabled and uses DHCPv6 or SLAAC, and otherwise the first enabled interface that does.</help>
+    </field>
+    <field>
+        <id>clat.general.prefix</id>
+        <label>NAT64 prefix</label>
+        <type>text</type>
+        <hint>64:ff9b::/96</hint>
+        <help>The NAT64 prefix of the provider, with a length of 32, 40, 48, 56, 64 or 96 bits. Leave empty to discover the prefix from router advertisements and DNS. No prefix is assumed when none is found.</help>
+    </field>
+    <field>
+        <id>clat.general.discover_dns</id>
+        <label>Discover through DNS</label>
+        <type>checkbox</type>
+        <help>When no router advertisement announces a NAT64 prefix, look it up as RFC 7050 describes, by asking the system resolver for ipv4only.arpa. This finds a prefix only when that resolver answers with DNS64.</help>
+    </field>
+    <field>
+        <id>clat.general.keep_with_native</id>
+        <label>Keep the CLAT when native IPv4 exists</label>
+        <type>checkbox</type>
+        <help>Normally the CLAT stays down while another interface has a native IPv4 gateway. When this is set the CLAT is kept, and the ranking of the gateways is left to System: Gateways. Native IPv4 on the uplink itself keeps the CLAT down in either case.</help>
+    </field>
+    <field>
+        <id>clat.general.firewall_rule</id>
+        <label>Automatic firewall rule</label>
+        <type>checkbox</type>
+        <help>Add an automatic firewall rule that passes the translated IPv6 packets which enter on the CLAT interface. Without this rule, a rule of your own has to pass them.</help>
+    </field>
+    <field>
+        <id>clat.general.manual_nat</id>
+        <label>I manage outbound NAT myself</label>
+        <type>checkbox</type>
+        <help>The CLAT relies on the automatic outbound NAT rules and does not activate while outbound NAT is in manual or disabled mode. Set this to allow activation in those modes, after you have added an outbound NAT rule on the CLAT interface.</help>
+    </field>
+    <field>
+        <id>clat.general.mss_clamp</id>
+        <label>TCP MSS clamp</label>
+        <type>checkbox</type>
+        <help>Clamp the TCP maximum segment size of connections through the CLAT to what fits the configured MTU of the uplink after translation.</help>
+    </field>
+    <field>
+        <id>clat.general.mss_offset</id>
+        <label>TCP MSS offset</label>
+        <type>text</type>
+        <hint>0</hint>
+        <help>Number of bytes that is subtracted from the automatic MSS value.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Advanced</label>
+        <collapse>true</collapse>
+    </field>
+    <field>
+        <id>clat.general.prefix_id</id>
+        <label>CLAT prefix ID</label>
+        <type>text</type>
+        <help>Hexadecimal number of the /64 inside the delegated prefix in which the CLAT address is chosen. Leave empty to use the highest /64 that no interface claims.</help>
+    </field>
+    <field>
+        <id>clat.general.address</id>
+        <label>CLAT IPv6 address</label>
+        <type>text</type>
+        <help>A full IPv6 address for the CLAT, which replaces the automatic selection. It must be even, because the next address is used by the translator, and both have to be routed to this firewall. A prefix ID cannot be set at the same time.</help>
+    </field>
+    <field>
+        <id>clat.general.ipv4_clat</id>
+        <label>CLAT IPv4 address</label>
+        <type>text</type>
+        <help>The IPv4 address of the CLAT interface, to which outbound NAT translates. Change it only when something else on this firewall uses 192.0.0.0/29.</help>
+    </field>
+    <field>
+        <id>clat.general.ipv4_tayga</id>
+        <label>Translator IPv4 address</label>
+        <type>text</type>
+        <help>The IPv4 address of the translator, which is the gateway address of the CLAT interface. It must differ from the CLAT IPv4 address.</help>
+    </field>
+    <field>
+        <id>clat.general.ipv4_mtu</id>
+        <label>IPv4 MTU to present</label>
+        <type>text</type>
+        <help>The largest IPv4 MTU the CLAT presents, from 1280 to 1500. The value in effect is lower when the IPv6 MTU of the uplink is less than this value plus 20.</help>
+    </field>
+    <field>
+        <id>clat.general.ipv6_mtu</id>
+        <label>IPv6 MTU override</label>
+        <type>text</type>
+        <help>Use this IPv6 MTU instead of the one detected on the uplink. It can only lower the detected value.</help>
+    </field>
+    <field>
+        <id>clat.general.udp_cksum</id>
+        <label>UDP zero checksum</label>
+        <type>dropdown</type>
+        <help>What the translator does with IPv4 UDP packets that carry no checksum, which IPv6 does not permit: calculate the checksum, drop the packet or forward it unchanged.</help>
+    </field>
+    <field>
+        <id>clat.general.test_target</id>
+        <label>Test target</label>
+        <type>text</type>
+        <help>An IPv4 address that answers pings of up to 1500 bytes through the NAT64. The tests on this page need it.</help>
+    </field>
+    <field>
+        <id>clat.general.log_state</id>
+        <label>Log state changes</label>
+        <type>checkbox</type>
+        <help>Write a log entry for every change of the CLAT state.</help>
+    </field>
+</form>

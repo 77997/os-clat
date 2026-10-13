@@ -1,0 +1,99 @@
+<?php
+
+/*
+ * Copyright (C) 2026 os-clat contributors
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+ * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+ * OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+namespace OPNsense\Clat\Api;
+
+use OPNsense\Base\ApiMutableServiceControllerBase;
+use OPNsense\Core\Backend;
+
+/**
+ * Class ServiceController
+ * @package OPNsense\Clat\Api
+ */
+class ServiceController extends ApiMutableServiceControllerBase
+{
+    protected static $internalServiceClass = '\OPNsense\Clat\Clat';
+    protected static $internalServiceEnabled = 'general.enabled';
+    protected static $internalServiceTemplate = 'OPNsense/Clat';
+    protected static $internalServiceName = 'clat';
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function invokeInterfaceRegistration()
+    {
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function invokeFirewallReload()
+    {
+        return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function reconfigureForceRestart()
+    {
+        return false;
+    }
+
+    /**
+     * service status; a GET request also receives the CLAT details in "clat".
+     * The service widget (a POST) and reconfigureAction() only read "status".
+     * @return array
+     */
+    public function statusAction()
+    {
+        $result = parent::statusAction();
+        if ($this->request->isGet()) {
+            $details = json_decode(trim((new Backend())->configdRun('clat details')), true);
+            $result['clat'] = is_array($details) ? $details : [];
+        }
+        return $result;
+    }
+
+    /**
+     * run the connectivity tests
+     * @return array
+     */
+    public function testAction()
+    {
+        if ($this->request->isPost()) {
+            $result = json_decode(trim((new Backend())->configdRun('clat test')), true);
+            if (is_array($result)) {
+                return $result;
+            }
+        }
+        $message = gettext('Unable to run the tests.');
+        return ['status' => 'ok', 'error' => $message, 'tests' => [], 'text' => $message];
+    }
+}
